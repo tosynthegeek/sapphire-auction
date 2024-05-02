@@ -1,0 +1,11 @@
+{
+  "name": "hardhat-project",
+  "devDependencies": {
+    "@nomicfoundation/hardhat-toolbox": "^4.0.0",
+    "@oasisprotocol/sapphire-hardhat": "^2.19.4",
+    "hardhat": "^2.22.3"
+  },
+  "dependencies": {
+    "dotenv": "^16.4.5"
+  }
+}
