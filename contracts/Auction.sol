@@ -5,18 +5,24 @@ import "@oasisprotocol/sapphire-contracts/contracts/Sapphire.sol";
 
 contract Auction {
     // Auction details
-    address payable private seller; // Address of the seller
-    uint256 private startingPrice; // Starting price of the auction
-    uint256 private highestBid; // Highest bid amount
-    address private highestBidder; // Address of the highest bidder
-    uint256 private auctionEndTime; // Timestamp when the auction ends
-    bool private auctionEnded; // Flag to indicate if the auction has ended
+    address payable public seller; // Address of the seller
+    uint256 public startingPrice; // Starting price of the auction
+    uint256 public highestBid; // Highest bid amount
+    address public highestBidder; // Address of the highest bidder
+    uint256 public auctionEndTime; // Timestamp when the auction ends
+    bool public auctionEnded; // Flag to indicate if the auction has ended
+    uint256 public bidCount; // Total count of bids placed in the auction
 
-    // Mapping to store bids of each address
-    mapping(address => bytes) private bids;
+    // Struct to store bid details
+    struct Bid {
+        address bidder;
+        uint256 bid;
+    }
+
+    Bid[] public bids; // Array to store all bids
 
     // Events for auction lifecycle
-    event Bid(address bidder, uint256 amount);
+    event BidCreated(address bidder, uint256 amount);
     event AuctionEnded(address winner, uint256 winningBid);
 
     // Constructor to initialize auction parameters
@@ -31,134 +37,81 @@ contract Auction {
         auctionEndTime = block.timestamp + _auctionEndTime; // Set the end time of the auction
     }
 
-    // Function for making a bid
-    function bid() public payable {
-        // Check if the auction has ended
+    /**
+     * @notice Allows a user to place a bid in the auction.
+     * @dev The bid must be higher than the current highest bid, and the auction must not have ended.
+     */
+    function bid() external payable {
         require(block.timestamp < auctionEndTime, "Auction has ended");
-        // Check if the bid is higher than the current highest bid
         require(
             msg.value > highestBid,
             "Bid must be higher than the current highest bid"
         );
-
-        // Return funds to the previous highest bidder
         if (highestBidder != address(0)) {
             payable(highestBidder).transfer(highestBid);
         }
-
-        // Update highest bidder and bid amount
         highestBid = msg.value;
-        bytes memory encrytedBid = encryptBid(highestBid, msg.sender);
         highestBidder = msg.sender;
-        bids[msg.sender] = encrytedBid; // Store the bid amount for the bidder
-
-        emit Bid(msg.sender, msg.value); // Emit Bid event
+        Bid memory newBid = Bid(msg.sender, msg.value);
+        bids.push(newBid);
+        bidCount++;
+        emit BidCreated(msg.sender, msg.value);
     }
 
-    function checkBid(address _address) external view returns (uint256) {
-        require(
-            bids[_address].length > 0 || bids[_address][0] > 0,
-            "No bid associated with address"
-        );
-        bytes memory value = bids[_address];
+    /**
+     * @notice Allows the highest bidder or seller to check the bid at a given index.
+     * @dev The auction must have ended, and only the highest bidder or seller can check bids.
+     * @param index The index of the bid to check.
+     * @return The bidder's address and bid amount.
+     */
+    function checkBid(uint256 index) external view returns (address, uint256) {
+        require(index <= bidCount, "Wrong Index");
+        Bid memory getBid = bids[index];
         require(block.timestamp > auctionEndTime, "Auction is still ongoing");
         require(
             msg.sender == highestBidder || msg.sender == seller,
             "Only Highest Bidder and seller can check bids"
         );
-        return decryptBid(value, msg.sender);
+        return (getBid.bidder, getBid.bid);
     }
 
+    /**
+     * @notice Returns the timestamp when the auction ends.
+     * @return The timestamp when the auction ends.
+     */
     function checkAuctionEndTime() external view returns (uint256) {
         return auctionEndTime;
     }
 
-    // Function to end the auction and transfer funds to the seller
-    function endAuction() public {
-        // Check if the auction has ended
+    /**
+     * @notice Ends the auction and transfers the highest bid amount to the seller.
+     * @dev The auction must have ended.
+     */
+    function endAuction() external {
         require(block.timestamp >= auctionEndTime, "Auction is still ongoing");
-
-        // Transfer the highest bid to the seller
-        seller.transfer(highestBid);
-        // Emit AuctionEnded event
-        emit AuctionEnded(highestBidder, highestBid);
         auctionEnded = true; // Update auction status
+        seller.transfer(highestBid); // Transfer the highest bid to the seller
+        emit AuctionEnded(highestBidder, highestBid); // Emit AuctionEnded event
     }
 
-    // Function to withdraw funds if not the highest bidder
-    function withdraw() public {
-        require(block.timestamp >= auctionEndTime, "Auction is still ongoing");
-        require(
-            msg.sender != highestBidder,
-            "The highest bidder cannot withdraw until the auction ends"
+    /**
+     * @notice Returns the auction details.
+     * @return The seller's address, starting price, highest bid amount, highest bidder's address,
+     * auction end timestamp, auction end status, and total bid count.
+     */
+    function getAuctionDetails()
+        external
+        view
+        returns (address, uint256, uint256, address, uint256, bool, uint256)
+    {
+        return (
+            seller,
+            startingPrice,
+            highestBid,
+            highestBidder,
+            auctionEndTime,
+            auctionEnded,
+            bidCount
         );
-
-        // Check if the sender has already withdrawn
-        bytes memory withdrawalFlag = bids[msg.sender];
-        require(withdrawalFlag.length == 0, "Funds already withdrawn");
-
-        // Get the encrypted bid amount for the sender
-        bytes memory encryptedBid = bids[msg.sender];
-
-        // Check if there are funds available for withdrawal
-        require(encryptedBid.length > 0, "No funds available for withdrawal");
-
-        // Decrypt the bid amount before processing the withdrawal
-        uint256 amount = decryptBid(encryptedBid, msg.sender);
-
-        // Update the withdrawal flag to prevent double withdrawal
-        bids[msg.sender] = abi.encodePacked(true);
-
-        // Transfer the funds to the sender
-        payable(msg.sender).transfer(amount);
-    }
-
-    function encryptBid(
-        uint256 _bid,
-        address _address
-    ) private view returns (bytes memory) {
-        bytes memory bidBytes = abi.encodePacked(_bid);
-        bytes memory addressBytes = abi.encodePacked(_address);
-        bytes32 key = keccak256(abi.encodePacked("Key"));
-        // bytes32 nonce = bytes32(Sapphire.randomByte(32, ""));
-        bytes32 nonce = keccak256(
-            abi.encodePacked(blockhash(block.number - 1), msg.sender, tx.origin)
-        );
-
-        return Sapphire.encrypt(key, nonce, bidBytes, addressBytes);
-    }
-
-    function decryptBid(
-        bytes memory bidByte,
-        address _address
-    ) private view returns (uint256) {
-        bytes memory addressBytes = abi.encodePacked(_address);
-        bytes32 key = keccak256(abi.encodePacked("Key"));
-        // bytes32 nonce = bytes32(Sapphire.randomByte(32, ""));
-        bytes32 nonce = keccak256(
-            abi.encodePacked(blockhash(block.number - 1), msg.sender, tx.origin)
-        );
-        bytes memory decryptedBid = Sapphire.decrypt(
-            key,
-            nonce,
-            bidByte,
-            addressBytes
-        );
-
-        // Manual byte parsing for uint256 conversion
-        uint256 value = 0;
-        for (uint i = 0; i < decryptedBid.length; i++) {
-            value =
-                value +
-                uint(uint8(decryptedBid[i])) *
-                (2 ** (8 * (decryptedBid.length - (i + 1))));
-        }
-
-        return value;
-    }
-
-    function testMap(address _address) public view returns (bytes memory) {
-        bytes memory mapTest = bids[_address];
-        return mapTest;
     }
 }
