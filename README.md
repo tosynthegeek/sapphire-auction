@@ -18,7 +18,7 @@ npx hardhat run scripts/run-auction.ts --network sapphire-testnet
 ```
 Output would be:
 
-``` typescript
+``` javascript
 Auction contract deployed to:  0x17a8FdB2526bd5d2049EF5D7A57ff9b54628b67f
 Bidding....
 Bid successful!
